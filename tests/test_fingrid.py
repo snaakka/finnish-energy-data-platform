@@ -1,4 +1,4 @@
-from unittest.mock import Mock, patch
+from unittest.mock import Mock, patch, call
 
 from src.ingestion.fingrid import request_with_retry
 
@@ -30,8 +30,27 @@ def test_request_with_retry_retries_on_429():
 
 
 def test_request_with_retry_stops_after_max_attempts():
-    with patch("src.ingestion.fingrid.requests.get") as mock_get:
+    with patch("src.ingestion.fingrid.requests.get") as mock_get, \
+        patch("src.ingestion.fingrid.time.sleep") as mock_sleep:
+
         response_429 = Mock()
         response_429.status_code = 429
 
         mock_get.side_effect = [response_429, response_429, response_429]
+
+        url = "https://example.com"
+        headers = {"x-api-key": "test-key"}
+        params = {"page": 1}
+
+        response = request_with_retry(
+            url,
+            headers=headers,
+            params=params
+        )
+
+        assert response.status_code == 429
+        assert mock_get.call_count == 3
+        assert mock_sleep.call_args_list == [
+            call(2),
+            call(4)
+        ]
