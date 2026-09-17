@@ -8,6 +8,28 @@ from dotenv import load_dotenv
 from pathlib import Path
 
 
+def request_with_retry(url, headers, params, max_attempts=3):
+
+    for attempt in range(1, max_attempts + 1):
+        response = requests.get(
+            url,
+            headers=headers,
+            params=params
+        )
+
+        if response.status_code == 429:
+            if attempt < max_attempts:
+                wait_time = 2 ** attempt
+                print(
+                    f"Rate limit exceeded. Retrying in {wait_time} seconds... (attempt {attempt}/{max_attempts})"
+                )
+                time.sleep(wait_time)
+                continue
+
+        break
+    return response
+
+
 def fetch_fingrid_data(api_key, variable_id, start_time, end_time) -> list:
 
     url = f"https://data.fingrid.fi/api/datasets/{variable_id}/data"
@@ -26,11 +48,10 @@ def fetch_fingrid_data(api_key, variable_id, start_time, end_time) -> list:
     }
 
     # First page
-    print(f"pagenum: {page_num}")
-    response = requests.get(
+    response = request_with_retry(
         url,
         headers=headers,
-        params=params,
+        params=params
     )
 
     response.raise_for_status()
@@ -40,16 +61,19 @@ def fetch_fingrid_data(api_key, variable_id, start_time, end_time) -> list:
     all_records.extend(x["data"])
 
     last_page = x["pagination"]["lastPage"]
+
+    print(f"Fetching page 1/{last_page}")
     
     time.sleep(2)
 
     for i in range(2, last_page+1):
         params["page"] = i
-        print(f"pagenum: {i}")
-        response = requests.get(
+        print(f"Fetching page {i}/{last_page}")
+
+        response = request_with_retry(
             url,
             headers=headers,
-            params=params,
+            params=params
         )
 
         response.raise_for_status()
@@ -81,6 +105,7 @@ def save_raw_data(all_records, variable_id, start_date):
 
     with open(file_path, "w", encoding="utf-8") as f:
         json.dump(all_records, f, indent=2)
+
 
 
 def main():
