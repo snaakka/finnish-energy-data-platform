@@ -3,6 +3,7 @@ import os
 import requests
 import time
 
+from datetime import date, timedelta
 from dotenv import load_dotenv
 from pathlib import Path
 
@@ -65,13 +66,13 @@ def fetch_fingrid_data(api_key, variable_id, start_time, end_time) -> list:
     return all_records
 
 
-def save_raw_data(all_records, variable_id, start_time):
-    year = start_time[:4]
-    month = start_time[5:7]
-    day = start_time[8:10]
+def save_raw_data(all_records, variable_id, start_date):
+    year = start_date.year
+    month = start_date.month
+    day = start_date.day
 
     path = Path(
-        f"data/raw/fingrid/dataset_{variable_id}/year={year}/month={month}/day={day}/"
+        f"data/raw/fingrid/dataset_{variable_id}/year={year}/month={month:02d}/day={day:02d}/"
     )
 
     path.mkdir(parents=True, exist_ok=True)
@@ -91,13 +92,26 @@ def main():
     if not api_key:
         raise ValueError("FINGRID_API_KEY environment variable is not set")
 
-    start_time = "2026-09-01T00:00:00Z"
-    end_time = "2026-09-02T00:00:00Z"
     variable_id = 124
 
-    all_records = fetch_fingrid_data(api_key, variable_id, start_time, end_time)
+    current_date = date(2026, 9, 1)
+    backfill_end_date = date(2026, 9, 3)
 
-    save_raw_data(all_records, variable_id, start_time)
+    while current_date <= backfill_end_date:
+
+        next_date = current_date + timedelta(days=1)
+
+        start_time = current_date.strftime("%Y-%m-%dT00:00:00Z")
+        end_time = next_date.strftime("%Y-%m-%dT00:00:00Z")
+
+        all_records = fetch_fingrid_data(api_key, variable_id, start_time, end_time)
+
+        save_raw_data(all_records, variable_id, current_date)
+
+        current_date = next_date
+
+        if current_date <= backfill_end_date:
+            time.sleep(2)
 
 
 if __name__ == "__main__":
