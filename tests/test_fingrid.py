@@ -1,7 +1,13 @@
+from datetime import date
+import json
 import pytest
 
 from unittest.mock import Mock, patch, call
-from src.ingestion.fingrid import request_with_retry, validate_records
+from src.ingestion.fingrid import (
+    request_with_retry,
+    validate_records,
+    save_raw_data_to_adls
+)
 
 
 def test_request_with_retry_retries_on_429():
@@ -122,3 +128,45 @@ def test_validate_records_rejects_invalid_time_interval():
 
     with pytest.raises(ValueError):
         validate_records(data, 124)
+
+
+def test_save_raw_data_to_adls():
+    dataset_id = 124
+    start_date = date(2026, 9, 1)
+    data = [
+        {
+            "datasetId": 124,
+            "startTime": "2026-09-01T00:00:00Z",
+            "endTime": "2026-09-01T00:15:00Z",
+            "value": 1234.29
+        }
+    ]
+
+    file_system_client = Mock()
+    directory_client = Mock()
+    file_client = Mock()
+
+    file_system_client.get_directory_client.return_value = directory_client
+    directory_client.get_file_client.return_value = file_client
+
+    save_raw_data_to_adls(
+        data,
+        dataset_id,
+        start_date,
+        file_system_client
+    )
+
+    file_system_client.get_directory_client.assert_called_once_with(
+        "fingrid/dataset_124/year=2026/month=09/day=01"
+    )
+
+    directory_client.get_file_client.assert_called_once_with(
+        "data.json"
+    )
+
+    expected_json = json.dumps(data, indent=2)
+
+    file_client.upload_data.assert_called_once_with(
+        expected_json,
+        overwrite=True
+    )

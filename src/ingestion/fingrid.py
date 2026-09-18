@@ -6,6 +6,8 @@ import time
 from datetime import date, datetime, timedelta
 from pathlib import Path
 
+from azure.identity import DefaultAzureCredential
+from azure.storage.filedatalake import DataLakeServiceClient
 import requests
 from dotenv import load_dotenv
 from pydantic import BaseModel, ValidationError
@@ -170,12 +172,43 @@ def save_raw_data(all_records, dataset_id, start_date):
     )
 
 
+def save_raw_data_to_adls(
+        all_records,
+        dataset_id, 
+        start_date,
+        file_system_client
+    ):
+
+    year = start_date.year
+    month = start_date.month
+    day = start_date.day
+
+    json_data = json.dumps(all_records, indent=2)
+
+    directory_path = (
+        f"fingrid/dataset_{dataset_id}/"
+        f"year={year}/month={month:02d}/day={day:02d}"
+    )
+
+    directory_client = file_system_client.get_directory_client(directory_path)
+
+    file_client = directory_client.get_file_client("data.json")
+    file_client.upload_data(json_data, overwrite=True)
+
+    logger.info(
+        "Raw data uploaded to ADLS: %s/data.json",
+        directory_path
+    )
+
+
 # Pipeline Orchestration
 def main():
     logging.basicConfig(
         level=logging.INFO,
         format="%(asctime)s | %(levelname)s | %(name)s | %(message)s"
     )
+
+    logging.getLogger("azure").setLevel(logging.WARNING)
 
     load_dotenv()
 
@@ -188,6 +221,15 @@ def main():
 
     current_date = date(2026, 9, 1)
     backfill_end_date = date(2026, 9, 3)
+
+    account_name = "stfinnishenergydata"
+    account_url = f"https://{account_name}.dfs.core.windows.net"
+
+    credential = DefaultAzureCredential()
+
+    service_client = DataLakeServiceClient(account_url, credential)
+
+    file_system_client = service_client.get_file_system_client(file_system="raw")
 
     while current_date <= backfill_end_date:
 
@@ -208,6 +250,8 @@ def main():
             validate_records(all_records, dataset_id)
 
             save_raw_data(all_records, dataset_id, current_date)
+
+            save_raw_data_to_adls(all_records, dataset_id, current_date, file_system_client)
 
         except Exception:
             logger.exception(

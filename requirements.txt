@@ -2,3 +2,5 @@ requests
 python-dotenv
 pydantic
 pytest
+azure-identity
+azure-storage-file-datalake
