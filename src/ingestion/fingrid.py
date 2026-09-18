@@ -1,13 +1,18 @@
 # Imports
 import json
+import logging
 import os
-import requests
 import time
-
-from datetime import date, timedelta, datetime
-from dotenv import load_dotenv
+from datetime import date, datetime, timedelta
 from pathlib import Path
+
+import requests
+from dotenv import load_dotenv
 from pydantic import BaseModel, ValidationError
+
+
+logger = logging.getLogger(__name__)
+
 
 # Data Models
 class FingridRecord(BaseModel):
@@ -30,8 +35,11 @@ def request_with_retry(url, headers, params, max_attempts=3):
         if response.status_code == 429:
             if attempt < max_attempts:
                 wait_time = 2 ** attempt
-                print(
-                    f"Rate limit exceeded. Retrying in {wait_time} seconds... (attempt {attempt}/{max_attempts})"
+                logger.warning(
+                    "Rate limit exceeded. Retrying in %s seconds... (attempt %s/%s)",
+                    wait_time,
+                    attempt,
+                    max_attempts
                 )
                 time.sleep(wait_time)
                 continue
@@ -72,13 +80,14 @@ def fetch_fingrid_data(api_key, dataset_id, start_time, end_time) -> list:
 
     last_page = x["pagination"]["lastPage"]
 
-    print(f"Fetching page 1/{last_page}")
-    
-    time.sleep(2)
+    logger.info("Fetching page 1/%s", last_page)
 
-    for i in range(2, last_page+1):
+    if last_page > 1:
+        time.sleep(2)
+
+    for i in range(2, last_page + 1):
         params["page"] = i
-        print(f"Fetching page {i}/{last_page}")
+        logger.info("Fetching page %s/%s", i, last_page)
 
         response = request_with_retry(
             url,
@@ -95,7 +104,10 @@ def fetch_fingrid_data(api_key, dataset_id, start_time, end_time) -> list:
         if i < last_page:
             time.sleep(2)
 
-    print(len(all_records))
+    logger.info(
+        "Fetched %s records",
+        len(all_records)
+    )
 
     return all_records
 
@@ -128,6 +140,11 @@ def validate_records(all_records, dataset_id):
                 f"Invalid time interval: startTime {validated_record.startTime} "
                 f"must be before endTime {validated_record.endTime}"
             )
+
+    logger.info(
+        "Validation completed successfully for %s records",
+        len(all_records)
+    )
             
 
 # Raw Data Storage
@@ -147,9 +164,18 @@ def save_raw_data(all_records, dataset_id, start_date):
     with open(file_path, "w", encoding="utf-8") as f:
         json.dump(all_records, f, indent=2)
 
+    logger.info(
+        "Raw data saved to %s",
+        file_path
+    )
+
 
 # Pipeline Orchestration
 def main():
+    logging.basicConfig(
+        level=logging.INFO,
+        format="%(asctime)s | %(levelname)s | %(name)s | %(message)s"
+    )
 
     load_dotenv()
 
@@ -170,11 +196,32 @@ def main():
         start_time = current_date.strftime("%Y-%m-%dT00:00:00Z")
         end_time = next_date.strftime("%Y-%m-%dT00:00:00Z")
 
-        all_records = fetch_fingrid_data(api_key, dataset_id, start_time, end_time)
+        logger.info(
+            "Starting ingestion for dataset %s, date %s",
+            dataset_id,
+            current_date
+        )
 
-        validate_records(all_records, dataset_id)
+        try:
+            all_records = fetch_fingrid_data(api_key, dataset_id, start_time, end_time)
 
-        save_raw_data(all_records, dataset_id, current_date)
+            validate_records(all_records, dataset_id)
+
+            save_raw_data(all_records, dataset_id, current_date)
+
+        except Exception:
+            logger.exception(
+                "Ingestion failed for dataset %s, date %s",
+                dataset_id,
+                current_date
+            )
+            raise
+
+        logger.info(
+            "Completed ingestion for dataset %s, date %s",
+            dataset_id,
+            current_date
+        )
 
         current_date = next_date
 
