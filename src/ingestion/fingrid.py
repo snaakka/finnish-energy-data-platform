@@ -4,7 +4,6 @@ import logging
 import os
 import time
 from datetime import date, datetime, timedelta
-from pathlib import Path
 
 from azure.identity import DefaultAzureCredential
 from azure.storage.filedatalake import DataLakeServiceClient
@@ -150,28 +149,6 @@ def validate_records(all_records, dataset_id):
             
 
 # Raw Data Storage
-def save_raw_data(all_records, dataset_id, start_date):
-    year = start_date.year
-    month = start_date.month
-    day = start_date.day
-
-    path = Path(
-        f"data/raw/fingrid/dataset_{dataset_id}/year={year}/month={month:02d}/day={day:02d}/"
-    )
-
-    path.mkdir(parents=True, exist_ok=True)
-
-    file_path = path / "data.json"
-
-    with open(file_path, "w", encoding="utf-8") as f:
-        json.dump(all_records, f, indent=2)
-
-    logger.info(
-        "Raw data saved to %s",
-        file_path
-    )
-
-
 def save_raw_data_to_adls(
         all_records,
         dataset_id, 
@@ -222,7 +199,11 @@ def main():
     current_date = date(2026, 9, 1)
     backfill_end_date = date(2026, 9, 3)
 
-    account_name = "stfinnishenergydata"
+    account_name = os.getenv("AZURE_STORAGE_ACCOUNT")
+
+    if not account_name:
+        raise ValueError("AZURE_STORAGE_ACCOUNT environment variable is not set")
+    
     account_url = f"https://{account_name}.dfs.core.windows.net"
 
     credential = DefaultAzureCredential()
@@ -248,8 +229,6 @@ def main():
             all_records = fetch_fingrid_data(api_key, dataset_id, start_time, end_time)
 
             validate_records(all_records, dataset_id)
-
-            save_raw_data(all_records, dataset_id, current_date)
 
             save_raw_data_to_adls(all_records, dataset_id, current_date, file_system_client)
 
