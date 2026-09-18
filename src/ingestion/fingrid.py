@@ -1,13 +1,23 @@
+# Imports
 import json
 import os
 import requests
 import time
 
-from datetime import date, timedelta
+from datetime import date, timedelta, datetime
 from dotenv import load_dotenv
 from pathlib import Path
+from pydantic import BaseModel, ValidationError
+
+# Data Models
+class FingridRecord(BaseModel):
+    datasetId: int
+    startTime: datetime
+    endTime: datetime
+    value: float
 
 
+# HTTP Helpers
 def request_with_retry(url, headers, params, max_attempts=3):
 
     for attempt in range(1, max_attempts + 1):
@@ -30,21 +40,21 @@ def request_with_retry(url, headers, params, max_attempts=3):
     return response
 
 
-def fetch_fingrid_data(api_key, variable_id, start_time, end_time) -> list:
+# Data Fetching
+def fetch_fingrid_data(api_key, dataset_id, start_time, end_time) -> list:
 
-    url = f"https://data.fingrid.fi/api/datasets/{variable_id}/data"
+    url = f"https://data.fingrid.fi/api/datasets/{dataset_id}/data"
 
     headers = {
         "x-api-key": api_key
     }
     
     all_records = []
-    page_num = 1
 
     params = {
         "startTime": start_time,
         "endTime": end_time,
-        "page": page_num
+        "page": 1
     }
 
     # First page
@@ -90,13 +100,44 @@ def fetch_fingrid_data(api_key, variable_id, start_time, end_time) -> list:
     return all_records
 
 
-def save_raw_data(all_records, variable_id, start_date):
+# Data Validation
+def validate_records(all_records, dataset_id):
+    # empty data validation
+    if not all_records:
+        raise ValueError("No records returned")
+        
+    # Pydantic schema validation
+    for idx, record in enumerate(all_records, start=1):
+        try:
+            validated_record = FingridRecord.model_validate(record)
+
+        except ValidationError as e:
+            raise ValueError(
+                f"Schema validation failed for record {idx}"
+            ) from e
+        
+        # Quality rules
+        if validated_record.datasetId != dataset_id:
+            raise ValueError(
+                f"Unexpected dataset ID: expected {dataset_id}, "
+                f"got {validated_record.datasetId}"
+            )
+
+        if validated_record.startTime >= validated_record.endTime:
+            raise ValueError(
+                f"Invalid time interval: startTime {validated_record.startTime} "
+                f"must be before endTime {validated_record.endTime}"
+            )
+            
+
+# Raw Data Storage
+def save_raw_data(all_records, dataset_id, start_date):
     year = start_date.year
     month = start_date.month
     day = start_date.day
 
     path = Path(
-        f"data/raw/fingrid/dataset_{variable_id}/year={year}/month={month:02d}/day={day:02d}/"
+        f"data/raw/fingrid/dataset_{dataset_id}/year={year}/month={month:02d}/day={day:02d}/"
     )
 
     path.mkdir(parents=True, exist_ok=True)
@@ -107,7 +148,7 @@ def save_raw_data(all_records, variable_id, start_date):
         json.dump(all_records, f, indent=2)
 
 
-
+# Pipeline Orchestration
 def main():
 
     load_dotenv()
@@ -117,7 +158,7 @@ def main():
     if not api_key:
         raise ValueError("FINGRID_API_KEY environment variable is not set")
 
-    variable_id = 124
+    dataset_id = 124
 
     current_date = date(2026, 9, 1)
     backfill_end_date = date(2026, 9, 3)
@@ -129,9 +170,11 @@ def main():
         start_time = current_date.strftime("%Y-%m-%dT00:00:00Z")
         end_time = next_date.strftime("%Y-%m-%dT00:00:00Z")
 
-        all_records = fetch_fingrid_data(api_key, variable_id, start_time, end_time)
+        all_records = fetch_fingrid_data(api_key, dataset_id, start_time, end_time)
 
-        save_raw_data(all_records, variable_id, current_date)
+        validate_records(all_records, dataset_id)
+
+        save_raw_data(all_records, dataset_id, current_date)
 
         current_date = next_date
 
@@ -139,5 +182,6 @@ def main():
             time.sleep(2)
 
 
+# Entry Point
 if __name__ == "__main__":
     main()
